@@ -1,162 +1,166 @@
-// CONFIG
-#pragma config FOSC = HS        // Oscillator Selection bits (HS oscillator)
-#pragma config WDTE = OFF       // Watchdog Timer Enable bit (WDT disabled)
-#pragma config PWRTE = OFF      // Power-up Timer Enable bit (PWRT disabled)
-#pragma config BOREN = OFF      // Brown-out Reset Enable bit (BOR disabled)
-#pragma config LVP = OFF        // Low-Voltage (Single-Supply) In-Circuit Serial Programming Enable bit (RB3 is digital I/O, HV on MCLR must be used for programming)
-#pragma config CPD = OFF        // Data EEPROM Memory Code Protection bit (Data EEPROM code protection off)
-#pragma config WRT = OFF        // Flash Program Memory Write Enable bits (Write protection off; all program memory may be written to by EECON control)
-#pragma config CP = OFF         // Flash Program Memory Code Protection bit (Code protection off)
 
-
-
-#define _XTAL_FREQ 20000000
-#define I2C_clock 100000
-#define I2C_SSPADD_value(I2C_clock) (_XTAL_FREQ/(4*I2C_clock))-1
-
+#pragma config PWRTE=OFF
+#pragma config WDTE=OFF
+#pragma config BOREN=OFF
+#pragma config CPD=OFF
+#pragma config CP=OFF
+#pragma config WRT=OFF
+#pragma config LVP=OFF
+#pragma config FOSC=HS
 
 #include <xc.h>
 
-void i2c_send(char address, char pointer);
-void i2c_receive(char address, char *data, int data_size);
-        
+#define _XTAL_FREQ 20000000
+#define I2C_clock 100000
+#define SSPADD_value(I2C_clock) (_XTAL_FREQ/(4*I2C_clock))-1
+
+
+void i2c_send(unsigned char address, unsigned char pointer);
+void i2c_receive(unsigned char address, unsigned char *data);
+
 int main(void)
 {
-    char MSandLSbyte[2];
-    //configuratuion
-    INTCONbits.GIE=0; //disable all interruptions
+    unsigned char MSandLSbytes[2];
     
-    TRISCbits.TRISC2=0; //0-as output for an oscilloscope
-    TRISCbits.TRISC3=1; //1-as input and as SCL
-    TRISCbits.TRISC4=1; //as SDA
-    
+    //config
     SSPSTAT=0;
-    SSPSTATbits.SMP=1; // Slew rate control disabled
+    SSPSTATbits.SMP=1; //disable slew rate control
+
+    INTCONbits.TMR0IE=0; //disable a TMR0 interruptions
+    INTCONbits.GIE=0; //disable all interrupts (not TMR0)
+    PIE1bits.SSPIE=0; //disable SSP interruptions
     
-    SSPCON &= 0b11111000; // clear last three bits
-    SSPCONbits.SSPM3=1;   // for this: 0bxxxx1000 Master transmit i2c mode
-    SSPCONbits.SSPEN=1;   //1  = Enables the serial port and configures the SDA a nd SCL pins as the source of the serial port pins
+    TRISCbits.TRISC2=0; //0-output for logic analyzer
+    TRISCbits.TRISC3=1; //input for SCL
+    TRISCbits.TRISC4=1; //input for SDA
+
+    SSPCON &= 0b11111000; //clear the last three bits
+    SSPCONbits.SSPM3=1; //I2C Master Mode    
+    SSPCONbits.SSPEN=1; // enable SS port
     
     SSPCON2=0;
-    SSPCON2bits.ACKDT=0;  //0-ack will be transmitted
+    SSPCON2bits.ACKDT=0; //0-ack will be transmitted
     
-    SSPADD=I2C_SSPADD_value(I2C_clock);
-    
+    SSPADD=SSPADD_value(I2C_clock);
+
     while(1)
     {
-        
-        //rise edge
+/*rise edge*/
         PORTCbits.RC2=0;
         PORTCbits.RC2=1;
-    
+        
         i2c_send(0x90, 0x00);
-        i2c_receive(0x90, MSandLSbyte, sizeof(MSandLSbyte));
+        i2c_receive(0x90, MSandLSbytes);
         
-        //send a stop condition
-        SSPCON2bits.PEN=1;
-        while(SSPCON2bits.PEN){;} //wait
-        PIR1bits.SSPIF=0;
+/*Stop*/        
+        SSPCON2bits.PEN=1; //send a stop condition
+        while(SSPCON2bits.PEN){;}
         
-        //fall edge
+        //wait
+            while(!PIR1bits.SSPIF){;}
+            PIR1bits.SSPIF=0;
+        
+/*fall edge*/
         PORTCbits.RC2=1;
         PORTCbits.RC2=0;
-    
     }
-
+    
     return 0;
 }
 
 
-
-        void i2c_send(char address, char pointer)
+void i2c_send(unsigned char address, unsigned char pointer)
         {
-            //write mode
-            SSPCON2bits.RCEN=0;
+/*write mode*/        
+            SSPCON2bits.RCEN=0; //I2C writing mode
             
-            //send start condition
+/*start and wait and wait*/            
             SSPCON2bits.SEN=1;
-            while(SSPCON2bits.SEN){;} //wait
-            
-        //send an address and a write bit
-            PIR1bits.SSPIF=0;
-            SSPBUF=address;
+            while(SSPCON2bits.SEN){;}
             
             //wait
             while(!PIR1bits.SSPIF){;}
             PIR1bits.SSPIF=0;
             
-            //check an ack from a slave
+/*send an address and a write bit and wait*/            
+            SSPBUF=0x90; //send an address and a write bit
+            
+            //wait
+            while(!PIR1bits.SSPIF){;}
+            PIR1bits.SSPIF=0;
+            
+/*check an ack*/          
             while(SSPCON2bits.ACKSTAT){;}
             
-        //send a pointer 
-            SSPBUF=pointer;
-            
+/*send a temperature pointer and wait*/  
+            SSPBUF=0x00; //send a temperature pointer
+                        
             //wait
             while(!PIR1bits.SSPIF){;}
             PIR1bits.SSPIF=0;
             
-            //check an ack from a slave
-            while(SSPCON2bits.ACKSTAT){;}      
-        
+/*check an ack*/            
+            while(SSPCON2bits.ACKSTAT){;}        
         }
         
-        void i2c_receive(char address, char *data, int data_size)
-        {
-            address |= 0b00000001; //0x91
-            
-            //write mode
-            SSPCON2bits.RCEN=0;
-            
-            //send a re-start condition
-            SSPCON2bits.RSEN=1;
-            while(SSPCON2bits.RSEN){;} //wait
-            
-        //send an address and a read bit
-            PIR1bits.SSPIF=0;
-            SSPBUF=address;
-            
-            //wait
-            while(!PIR1bits.SSPIF){;}
-            PIR1bits.SSPIF=0;
-            
-            //check an ack from a slave
-            while(SSPCON2bits.ACKSTAT){;}
 
+void i2c_receive(unsigned char address, unsigned char *data)
+        {
+/*write mode*/        
+            SSPCON2bits.RCEN=0; //I2C writing mode
             
-            //read mode
-        //read MSbyte
-            SSPCON2bits.RCEN=1;
-            
-            //wait
-            while(!PIR1bits.SSPIF){;}
-            PIR1bits.SSPIF=0;
-            
-            //send an ack
-            SSPCON2bits.ACKEN=1; //send an ACKDT for a slave
+/*send a re-start condition and wait and wait*/   
+            SSPCON2bits.RSEN=1;
             
             //wait
             while(!PIR1bits.SSPIF){;}
             PIR1bits.SSPIF=0;
             
-            //save MSbyte
-            *(data+0)=SSPBUF;
+/*prepair an address byte with a reading bit*/    
+            address+=1;
             
-        //read LSbyte
-            SSPCON2bits.RCEN=1;
-            
-            //wait
-            while(!PIR1bits.SSPIF){;}
-            PIR1bits.SSPIF=0;
-            
-            //send an ack
-            SSPCON2bits.ACKEN=1; //send an ACKDT for a slave
+/*send an address and a reading bit*/  
+            SSPBUF=address; //send an address and a read bit
             
             //wait
             while(!PIR1bits.SSPIF){;}
             PIR1bits.SSPIF=0;
             
-            //save MSbyte
-            *(data+1)=SSPBUF; 
-        
-        
+/*check an ack*/       
+            while(SSPCON2bits.ACKSTAT){;}
+            
+/*start receive and wait and save a MSbyte variable*/  
+            SSPCON2bits.RCEN=1; //start receiving
+            
+            //wait
+            while(!PIR1bits.SSPIF){;}
+            PIR1bits.SSPIF=0;
+            
+            /*send an ack*/
+            SSPCON2bits.ACKEN=1; //send an ack sequence
+            
+            //wait
+            while(!PIR1bits.SSPIF){;}
+            PIR1bits.SSPIF=0;
+            
+            /*save MSbyte*/
+            *data=SSPBUF;
+            
+/*start receive and wait and save a LSbyte variable*/    
+            SSPCON2bits.RCEN=1; //start receiving
+            
+            //wait
+            while(!PIR1bits.SSPIF){;}
+            PIR1bits.SSPIF=0;
+            
+            /*send an ack*/
+            SSPCON2bits.ACKEN=1; //send an ack sequence
+ 
+            //wait
+            while(!PIR1bits.SSPIF){;}
+            PIR1bits.SSPIF=0;            
+            
+            /*save LSbyte*/
+            *(data+1)=SSPBUF;
         }
+
